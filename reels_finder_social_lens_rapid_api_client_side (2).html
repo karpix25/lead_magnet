@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>Reels Finder — Instagram Social API (RapidAPI)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif; margin: 0; padding: 24px; background: linear-gradient(135deg,#667eea 0%,#764ba2 100%); min-height: 100vh; color:#111; }
+    .app { max-width: 1000px; margin: 0 auto; background:#fff; border-radius: 18px; padding: 24px; box-shadow: 0 20px 40px rgba(0,0,0,.12); }
+    h1 { margin: 0 0 8px; font-size: 28px; background: linear-gradient(45deg,#E1306C,#F56040); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+    .muted { color:#666; }
+    .card { border:1px solid #eee; border-radius:12px; padding:16px; background:#fafafa; }
+    label { font-weight:600; display:block; margin: 4px 0 6px; }
+    input, select, button { width: 100%; padding: 10px 12px; border:2px solid #ddd; border-radius:8px; font-size: 14px; background:#fff; }
+    input:focus, select:focus { outline:none; border-color:#E1306C; box-shadow:0 0 0 3px rgba(225,48,108,.1); }
+    .btn { background: linear-gradient(45deg,#E1306C,#F56040); color:#fff; border:none; font-weight:700; cursor:pointer; transition: transform .15s ease; }
+    .btn:hover { transform: translateY(-2px); box-shadow:0 8px 24px rgba(225,48,108,.28); }
+    .row { display:grid; grid-template-columns: 1.4fr 1.8fr 0.9fr 0.9fr 140px; gap:12px; }
+    .players { display:grid; gap:18px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); margin-top:16px; }
+    .video-card { border:1px solid #eee; border-radius:14px; overflow:hidden; background:#fff; box-shadow:0 6px 18px rgba(0,0,0,.08); }
+    .embed { width:100%; min-height:420px; border:0; display:block; }
+    .vc { padding:14px; }
+    .stats { display:grid; grid-template-columns: repeat(2,1fr); gap:8px; margin:8px 0; }
+    .stat { background:#fafafa; border:1px solid #f0f0f0; padding:10px; border-radius:8px; text-align:center; }
+    .stat .k { font-size:12px; color:#666; display:block; }
+    .stat .v { font-size:16px; font-weight:800; }
+    .ok { background:#e6ffed; border-left:4px solid #28a745; padding:12px; border-radius:8px; }
+    .err { background:#fde8e8; border-left:4px solid #dc3545; padding:12px; border-radius:8px; }
+    .hidden { display:none; }
+    .viral { font-weight:800; margin-top:6px; }
+    .viral.high { color:#28a745; }
+    .viral.med { color:#ff9800; }
+    .viral.low { color:#dc3545; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <h1>🔥 Reels Finder — Instagram Social API</h1>
+    <div class="muted">Минимальная версия: провайдер зашит — <code>instagram-social-api.p.rapidapi.com</code>. Есть только RapidAPI Key, тип поиска (логин/тег), запрос и количество видео. Показатель «Вирусность» вернули.</div>
+
+    <div class="card" style="margin-top:14px;">
+      <div class="row">
+        <div>
+          <label for="apiKey">RapidAPI Key</label>
+          <input id="apiKey" type="password" autocomplete="off" placeholder="вставьте ваш RapidAPI ключ" />
+        </div>
+        <div>
+          <label for="query">Запрос</label>
+          <input id="query" placeholder="@username или #hashtag (можно без @/#)" />
+        </div>
+        <div>
+          <label for="mode">Тип поиска</label>
+          <select id="mode">
+            <option value="user" selected>По логину</option>
+            <option value="hashtag">По тегу</option>
+          </select>
+        </div>
+        <div>
+          <label for="limit">Кол-во видео</label>
+          <select id="limit">
+            <option>12</option><option selected>24</option><option>36</option><option>48</option><option>60</option><option>72</option><option>84</option>
+          </select>
+        </div>
+        <div style="align-self:end;">
+          <button id="btnSearch" class="btn">🔍 Искать</button>
+        </div>
+      </div>
+      <div id="msg" class="ok hidden" style="margin-top:10px;"></div>
+      <div id="err" class="err hidden" style="margin-top:10px;"></div>
+    </div>
+
+    <div id="summary" class="card hidden" style="margin-top:14px;"></div>
+    <div id="results" class="players"></div>
+  </div>
+
+  <script async defer src="//www.instagram.com/embed.js"></script>
+  <script>
+    // Константы провайдера
+    const HOST = 'instagram-social-api.p.rapidapi.com';
+    const EP_USER_REELS = '/v1/reels';            // username_or_id_or_url, pagination_token, url_embed_safe
+    const EP_SEARCH_REELS = '/v1/search_reels';   // search_query, pagination_token, url_embed_safe
+
+    const $ = (id) => document.getElementById(id);
+
+    async function httpGet(path, params, key){
+      const qs = new URLSearchParams(params||{}).toString();
+      const url = `https://${HOST}${path}${qs?`?${qs}`:''}`;
+      const res = await fetch(url, { method: 'GET', headers: { 'X-RapidAPI-Key': key, 'X-RapidAPI-Host': HOST }});
+      if (!res.ok){ const txt = await res.text().catch(()=>''); throw new Error(`HTTP ${res.status} — ${txt}`.slice(0,600)); }
+      return res.json();
+    }
+
+    async function fetchUserReels(username, key, limit){
+      username = (username||'').trim().replace(/^@/, '');
+      if (!username) throw new Error('Введите логин без @');
+      let items=[]; let cursor=null; let guard=0;
+      while(items.length < limit && guard < 12){
+        guard++;
+        const params = { username_or_id_or_url: username, url_embed_safe: true };
+        if (cursor) params.pagination_token = cursor;
+        const data = await httpGet(EP_USER_REELS, params, key);
+        const batch = extractItems(data);
+        items.push(...batch);
+        cursor = (data && (data.pagination_token || data.next || (data.data && (data.data.pagination_token || data.data.next)))) || null;
+        if (!cursor || batch.length===0) break;
+        await new Promise(r=>setTimeout(r, 280));
+      }
+      return normalize(items).slice(0, limit);
+    }
+
+    async function fetchHashtagReels(tag, key, limit){
+      tag = (tag||'').trim().replace(/^#/, '');
+      if (!tag) throw new Error('Введите тег без #');
+      let items=[]; let cursor=null; let guard=0;
+      while(items.length < limit && guard < 12){
+        guard++;
+        const params = { search_query: `#${tag}` , url_embed_safe: true };
+        if (cursor) params.pagination_token = cursor;
+        const data = await httpGet(EP_SEARCH_REELS, params, key);
+        const batch = extractItems(data);
+        items.push(...batch);
+        cursor = (data && (data.pagination_token || data.next || (data.data && (data.data.pagination_token || data.data.next)))) || null;
+        if (!cursor || batch.length===0) break;
+        await new Promise(r=>setTimeout(r, 280));
+      }
+      return normalize(items).slice(0, limit);
+    }
+
+    function extractItems(data){
+      if (!data) return [];
+      const out=[];
+      if (Array.isArray(data)) out.push(...data);
+      if (Array.isArray(data.items)) out.push(...data.items);
+      if (Array.isArray(data.reels)) out.push(...data.reels);
+      if (Array.isArray(data.results)) out.push(...data.results);
+      if (data.data){
+        if (Array.isArray(data.data)) out.push(...data.data);
+        if (Array.isArray(data.data.items)) out.push(...data.data.items);
+        if (Array.isArray(data.data.reels)) out.push(...data.data.reels);
+        if (Array.isArray(data.data.results)) out.push(...data.data.results);
+      }
+      if (data.clips && Array.isArray(data.clips)) out.push(...data.clips);
+      const seen=new Set();
+      return out.filter(it=>{ const id = (it && (it.id||it.code||it.shortcode||it.permalink||it.url)) || Math.random(); if (seen.has(id)) return false; seen.add(id); return true; });
+    }
+
+    function normalize(items){
+      return items.map(it=>{
+        const m = it.media || it || {};
+        const owner = m.owner || m.user || it.owner || it.user || m.author || {};
+        const caption = m.caption || { text: m.caption_text || m.caption || '' };
+        const permalink = m.permalink || m.url || m.link || it.permalink || '';
+        const code = m.code || m.shortcode || it.code || it.shortcode || shortcodeFrom(permalink) || '';
+        const ts = m.taken_at || m.timestamp || m.taken_at_ts || (m.taken_at_ms ? Math.floor(m.taken_at_ms/1000) : 0);
+        return { media: {
+          code,
+          play_count: num(m.play_count || m.view_count || m.views || m.playCount || 0),
+          like_count: num(m.like_count || m.likes || m.likeCount || 0),
+          comment_count: num(m.comment_count || m.comments || m.commentCount || 0),
+          reshare_count: num(m.reshare_count || m.shares || m.shareCount || 0),
+          taken_at: num(ts),
+          owner: { username: owner.username || owner.name || 'unknown' },
+          caption: { text: caption.text || caption || '' }
+        }};
+      });
+    }
+
+    function shortcodeFrom(link){ if (!link || typeof link!=='string') return null; const m = link.match(/instagram\.com\/(?:p|reel)\/([^\/\?#]+)/i); return m?m[1]:null; }
+    function num(x){ x = Number(x); return isFinite(x)?x:0; }
+    function fmtNumber(n){ if (n>=1_000_000) return (n/1_000_000).toFixed(1)+'M'; if (n>=1_000) return (n/1_000).toFixed(1)+'K'; return String(n); }
+    function fmtDate(ts){ if (!ts) return '—'; const d=new Date(ts*1000); return d.toLocaleDateString('ru-RU',{day:'numeric', month:'short', year:'numeric'}); }
+
+    // Метрики
+    function viralCoeff(views, avg){ return avg>0 ? (views/avg)*100 : 0; }
+    function erReshares(resh, views){ return views>0 ? (resh/views)*100 : 0; }
+
+    function embedHTML(code){
+      if (!code) return `<div class="embed" style="display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#E1306C,#F56040);color:#fff;">Встроить не удалось — открой по ссылке</div>`;
+      return `<iframe class="embed" src="https://www.instagram.com/p/${code}/embed/" scrolling="no" allowtransparency="true"></iframe>`;
+    }
+
+    function renderCards(items, { computeVirality=false, avg=0, label='запросу' }){
+      const root=$('results'); root.innerHTML='';
+      items.sort((a,b)=> (b.media.play_count||0) - (a.media.play_count||0));
+      items.forEach(it=>{
+        const m = it.media; const views = m.play_count||0; const reshares = m.reshare_count||0;
+        const v = computeVirality ? viralCoeff(views, avg) : null; const er = computeVirality ? erReshares(reshares, views) : null;
+        const cls = v===null? '' : (v>=150? 'high' : v>=80? 'med' : 'low'); const emoji = v===null? '' : (v>=150? '🔥' : v>=80? '👍' : '📉');
+        const card = document.createElement('div'); card.className='video-card';
+        card.innerHTML = `${embedHTML(m.code)}
+          <div class="vc">
+            <div class="stats">
+              <div class="stat"><span class="k">Просмотры</span><span class="v">${fmtNumber(views)}</span></div>
+              <div class="stat"><span class="k">Лайки</span><span class="v">${fmtNumber(m.like_count||0)}</span></div>
+              <div class="stat"><span class="k">Комментарии</span><span class="v">${fmtNumber(m.comment_count||0)}</span></div>
+              <div class="stat"><span class="k">${computeVirality? 'ER репостов' : 'Репосты'}</span><span class="v">${computeVirality? (er.toFixed(2)+'%') : fmtNumber(reshares)}</span></div>
+            </div>
+            ${computeVirality? `<div class="viral ${cls}">${emoji} Вирусность: ${v.toFixed(1)}%</div>` : ''}
+            <div class="muted">@${m.owner.username || 'unknown'} • ${fmtDate(m.taken_at)}</div>
+            <div style="margin-top:8px;display:flex;gap:8px;"><a class="btn" style="text-decoration:none;display:inline-block;text-align:center;padding:8px 10px;border-radius:8px;" target="_blank" href="${m.code?`https://www.instagram.com/p/${m.code}/`: '#'}">Открыть</a></div>
+          </div>`;
+        root.appendChild(card);
+      });
+      if (window.instgrm && window.instgrm.Embeds) { try { window.instgrm.Embeds.process(); } catch(e){} }
+    }
+
+    async function onSearch(){
+      $('msg').classList.add('hidden'); $('err').classList.add('hidden');
+      $('results').innerHTML=''; $('summary').classList.add('hidden');
+      const key = $('apiKey').value.trim();
+      let q = $('query').value.trim();
+      const modeSel = $('mode').value;
+      const limit = Number($('limit').value);
+      if (!key){ $('err').textContent='Введите RapidAPI Key'; $('err').classList.remove('hidden'); return; }
+      if (!q){ $('err').textContent='Введите запрос'; $('err').classList.remove('hidden'); return; }
+
+      // Авто-детект: если пользователь набрал @ или # — подстроим режим
+      let mode = modeSel;
+      if (q.startsWith('@')) mode = 'user';
+      if (q.startsWith('#')) mode = 'hashtag';
+
+      $('msg').textContent='Ищу рилс…'; $('msg').classList.remove('hidden');
+      try{
+        if (mode === 'user'){
+          const items = await fetchUserReels(q, key, limit);
+          if (items.length===0){ $('err').textContent='Ничего не найдено'; $('err').classList.remove('hidden'); $('msg').classList.add('hidden'); return; }
+          const avg = items.reduce((s,x)=> s + (x.media.play_count||0), 0) / items.length;
+          $('summary').textContent = `Найдено ${items.length} рилс по логину «${q}». Средние просмотры: ${fmtNumber(avg)}`; $('summary').classList.remove('hidden');
+          renderCards(items, { computeVirality:true, avg, label:'логину' });
+          $('msg').textContent='Готово ✅';
+        } else {
+          const items = await fetchHashtagReels(q, key, limit);
+          if (items.length===0){ $('err').textContent='Ничего не найдено'; $('err').classList.remove('hidden'); $('msg').classList.add('hidden'); return; }
+          $('summary').textContent = `Найдено ${items.length} рилс по тегу «${q}».`; $('summary').classList.remove('hidden');
+          renderCards(items, { computeVirality:false });
+          $('msg').textContent='Готово ✅';
+        }
+      }catch(e){ console.error(e); $('err').textContent=String(e.message||e).slice(0,800); $('err').classList.remove('hidden'); $('msg').classList.add('hidden'); }
+    }
+
+    $('btnSearch').addEventListener('click', onSearch);
+    $('query').addEventListener('keydown', (e)=>{ if (e.key==='Enter') onSearch(); });
+  </script>
+</body>
+</html>
